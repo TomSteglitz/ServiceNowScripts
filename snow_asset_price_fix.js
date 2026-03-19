@@ -1,102 +1,102 @@
 // ============================================================
-//  ServiceNow Background Script – Hardware Asset Preis-Änderung
-//  Tabelle: alm_hardware
-//  Alle Assets mit dem angegebenen Display Name werden geändert
+//  ServiceNow Background Script – Hardware Asset Price Fix
+//  Table: alm_hardware
+//  All assets matching the given Display Name will be updated
 // ============================================================
 
 // ============================================================
-//  !! KONFIGURATION – Hier anpassen !!
+//  !! CONFIGURATION – Edit this section only !!
 // ============================================================
 
-var DRY_RUN = true; // true = nur Vorschau, false = Änderung wird gespeichert
+var DRY_RUN = true; // true = preview only, false = changes will be saved
 
-var ASSET_DISPLAY_NAME = 'Hier Display Name eintragen'; // z.B. 'Dell Latitude 5520'
-var NEUER_PREIS        = 0.00;                           // z.B. 1299.99
+var ASSET_DISPLAY_NAME = 'Enter Display Name here'; // e.g. 'Dell Latitude 5520'
+var NEW_PRICE          = 0.00;                       // e.g. 1299.99
 
 // ============================================================
-//  LOGIK – Bitte nicht verändern
+//  LOGIC – Do not modify below this line
 // ============================================================
 
 gs.print('');
 gs.print('======================================================');
-gs.print('  Hardware Asset Preis-Fix Script');
-gs.print('  Modus: ' + (DRY_RUN ? 'DRY RUN - Keine Aenderungen werden gespeichert' : 'LIVE - Aenderungen werden gespeichert'));
+gs.print('  Hardware Asset Price Fix Script');
+gs.print('  Mode: ' + (DRY_RUN ? 'DRY RUN - No changes will be saved' : 'LIVE - Changes will be saved'));
 gs.print('======================================================');
 gs.print('');
 
-// Validierung der Konfiguration
-if (!ASSET_DISPLAY_NAME || ASSET_DISPLAY_NAME === 'Hier Display Name eintragen') {
-    gs.print('FEHLER: Bitte einen gueltigen Display Name in ASSET_DISPLAY_NAME eintragen.');
-    gs.print('Script wird abgebrochen.');
-    throw new Error('Kein Asset Display Name konfiguriert.');
+// Input validation
+if (!ASSET_DISPLAY_NAME || ASSET_DISPLAY_NAME === 'Enter Display Name here') {
+    gs.print('ERROR: Please enter a valid Display Name in ASSET_DISPLAY_NAME.');
+    gs.print('Script execution aborted.');
+    throw new Error('No asset Display Name configured.');
 }
 
-if (isNaN(NEUER_PREIS) || NEUER_PREIS < 0) {
-    gs.print('FEHLER: NEUER_PREIS muss eine positive Zahl sein.');
-    gs.print('Script wird abgebrochen.');
-    throw new Error('Ungueltiger Preis konfiguriert.');
+if (isNaN(NEW_PRICE) || NEW_PRICE < 0) {
+    gs.print('ERROR: NEW_PRICE must be a positive number.');
+    gs.print('Script execution aborted.');
+    throw new Error('Invalid price configured.');
 }
 
-gs.print('Suche alle Assets mit Display Name: "' + ASSET_DISPLAY_NAME + '"');
+gs.print('Searching all assets with Display Name: "' + ASSET_DISPLAY_NAME + '"');
 gs.print('');
 
-// Assets suchen
+// Query assets
 var gr = new GlideRecord('alm_hardware');
 gr.addQuery('display_name', ASSET_DISPLAY_NAME);
 gr.query();
 
-var anzahlGefunden  = 0;
-var anzahlGeaendert = 0;
-var anzahlIdentisch = 0;
+var countFound    = 0;
+var countChanged  = 0;
+var countIdentical = 0;
 
 while (gr.next()) {
-    anzahlGefunden++;
+    countFound++;
 
-    var sysId          = gr.getValue('sys_id');
-    var assetTag       = gr.getValue('asset_tag') || '(kein Asset Tag)';
-    var aktuellerPreis = parseFloat(gr.getValue('cost')) || 0.00;
+    var sysId        = gr.getValue('sys_id');
+    var assetTag     = gr.getValue('asset_tag') || '(no asset tag)';
+    var currentPrice = parseFloat(gr.getValue('cost')) || 0.00;
 
     gs.print('--------------------------------------------------');
-    gs.print('  Asset #' + anzahlGefunden);
-    gs.print('  Asset Tag    : ' + assetTag);
-    gs.print('  Sys ID       : ' + sysId);
-    gs.print('  Akt. Preis   : ' + aktuellerPreis.toFixed(2) + ' EUR');
-    gs.print('  Neuer Preis  : ' + parseFloat(NEUER_PREIS).toFixed(2) + ' EUR');
+    gs.print('  Asset #' + countFound);
+    gs.print('  Asset Tag     : ' + assetTag);
+    gs.print('  Sys ID        : ' + sysId);
+    gs.print('  Current Price : ' + currentPrice.toFixed(2) + ' EUR');
+    gs.print('  New Price     : ' + parseFloat(NEW_PRICE).toFixed(2) + ' EUR');
 
-    if (aktuellerPreis === parseFloat(NEUER_PREIS)) {
-        gs.print('  INFO: Preis bereits identisch - keine Aenderung notwendig.');
-        anzahlIdentisch++;
+    if (currentPrice === parseFloat(NEW_PRICE)) {
+        gs.print('  INFO: Price already identical - no change necessary.');
+        countIdentical++;
     } else if (DRY_RUN) {
-        gs.print('  DRY RUN: Wuerde Preis von ' + aktuellerPreis.toFixed(2) + ' EUR auf ' + parseFloat(NEUER_PREIS).toFixed(2) + ' EUR aendern.');
-        anzahlGeaendert++;
+        gs.print('  DRY RUN: Would change price from ' + currentPrice.toFixed(2) + ' EUR to ' + parseFloat(NEW_PRICE).toFixed(2) + ' EUR.');
+        countChanged++;
     } else {
-        gr.setValue('cost', NEUER_PREIS);
+        gr.setValue('cost', NEW_PRICE);
         gr.update();
-        gs.print('  OK: Preis geaendert: ' + aktuellerPreis.toFixed(2) + ' EUR -> ' + parseFloat(NEUER_PREIS).toFixed(2) + ' EUR');
-        anzahlGeaendert++;
+        gs.print('  OK: Price changed: ' + currentPrice.toFixed(2) + ' EUR -> ' + parseFloat(NEW_PRICE).toFixed(2) + ' EUR');
+        countChanged++;
     }
 }
 
 gs.print('');
 gs.print('======================================================');
-gs.print('  Zusammenfassung');
+gs.print('  Summary');
 gs.print('======================================================');
 
-if (anzahlGefunden === 0) {
-    gs.print('  FEHLER: Keine Assets mit Display Name "' + ASSET_DISPLAY_NAME + '" gefunden.');
-    gs.print('  Bitte den Namen pruefen (Gross-/Kleinschreibung beachten).');
+if (countFound === 0) {
+    gs.print('  ERROR: No assets found with Display Name "' + ASSET_DISPLAY_NAME + '".');
+    gs.print('  Please verify the name (case-sensitive).');
 } else {
-    gs.print('  Gefunden         : ' + anzahlGefunden + ' Asset(s)');
-    gs.print('  Bereits korrekt  : ' + anzahlIdentisch + ' Asset(s)');
+    gs.print('  Found           : ' + countFound + ' asset(s)');
+    gs.print('  Already correct : ' + countIdentical + ' asset(s)');
     if (DRY_RUN) {
-        gs.print('  Wuerden geaendert: ' + anzahlGeaendert + ' Asset(s)  <- DRY RUN, noch nicht gespeichert');
+        gs.print('  Would be changed: ' + countChanged + ' asset(s)  <- DRY RUN, not yet saved');
         gs.print('');
-        gs.print('  >> Setze DRY_RUN = false um alle Aenderungen tatsaechlich zu speichern.');
+        gs.print('  >> Set DRY_RUN = false to actually save all changes.');
     } else {
-        gs.print('  Geaendert        : ' + anzahlGeaendert + ' Asset(s)');
+        gs.print('  Changed         : ' + countChanged + ' asset(s)');
     }
 }
 
 gs.print('======================================================');
-gs.print('  Script beendet.');
+gs.print('  Script finished.');
 gs.print('======================================================');
