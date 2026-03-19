@@ -13,7 +13,6 @@ All scripts are written in JavaScript (ServiceNow Rhino engine) and must be exec
 /
 ├── README.md
 ├── Change Management/
-│   ├── fix_duplicate_scheduled_changes.js
 │   └── fix_duplicate_changes_by_requester.js
 └── HAM/
     ├── hw_model_dedup.js
@@ -52,36 +51,6 @@ var DRY_RUN = true; // true = log only | false = actually execute
 ## Scripts
 
 ### Change Management
-
-#### `fix_duplicate_scheduled_changes.js`
-
-**Purpose:**  
-Identifies duplicate `change_request` records that share the same `short_description` and have the status **Scheduled**. Deletes all duplicates, keeping only the **newest** record (highest `sys_created_on`) per group.
-
-**Logic:**
-- Queries all `change_request` records with `state = scheduled`
-- Groups records by `short_description`
-- Identifies groups with more than one record (duplicates)
-- Keeps the newest record per group
-- Deletes all older duplicates
-
-**Configuration:**
-```js
-var DRY_RUN = true; // true = log only | false = actually execute
-```
-
-**Dry Run output example:**
-```
-=== Duplicate Scheduled Change Requests ===
-Total duplicate groups found: 2
----
-Title: "Monthly Patching" | Total records: 3
-  KEEP   → CHG0012345 (created: 2025-03-15 10:00:00)
-  DELETE → CHG0012300 (created: 2025-02-10 08:30:00) [DRY RUN – not deleted]
-  DELETE → CHG0012100 (created: 2025-01-05 07:00:00) [DRY RUN – not deleted]
-```
-
----
 
 #### `fix_duplicate_changes_by_requester.js`
 
