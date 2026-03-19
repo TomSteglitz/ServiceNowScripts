@@ -15,6 +15,7 @@ All scripts are written in JavaScript (ServiceNow Rhino engine) and must be exec
 ├── README.md
 └── scripts/
     ├── hw_model_dedup.js
+    ├── hw_model_dedup_manual.js
     └── snow_asset_price_fix.js
 ```
 
@@ -186,6 +187,92 @@ Searching all assets with Display Name: "Dell Latitude 5520"
 - The script aborts if `NEW_PRICE` is not a valid positive number.
 - Assets where `cost` already equals `NEW_PRICE` are counted as "Already correct" and are not updated.
 - Changes are **not reversible** once `DRY_RUN = false` — always verify the dry-run output first.
+
+---
+
+### 3. Hardware Model Duplicate Cleanup (Manual)
+
+**File:** `scripts/hw_model_dedup_manual.js`
+
+#### Purpose
+
+Deletes specific hardware model duplicates defined manually by their `sys_id`.  
+Unlike the automatic dedup script, this script gives you full control — you explicitly specify which model to delete and which model to keep as the target.  
+Before deletion, all linked assets are automatically reassigned to the target model.
+
+Use this script when you already know the exact sys_ids of the duplicate and target models, or when the automatic script (based on name + manufacturer matching) is too broad for your situation.
+
+#### Difference to Script 1
+
+| Feature                  | `hw_model_dedup.js` (auto)       | `hw_model_dedup_manual.js` (manual) |
+|--------------------------|----------------------------------|--------------------------------------|
+| Duplicate detection      | Automatic (name + manufacturer)  | Manual (explicit sys_id pairs)       |
+| Control over which to delete | Oldest kept automatically    | You decide per entry                 |
+| Use case                 | Bulk cleanup of all duplicates   | Targeted cleanup of known duplicates |
+
+#### Affected Tables (Asset Reassignment)
+
+| Table              | Field      |
+|--------------------|------------|
+| `alm_asset`        | `model`    |
+| `cmdb_ci_hardware` | `model_id` |
+| `cmdb_ci`          | `model_id` |
+
+#### Configuration
+
+```javascript
+var DRY_RUN = true; // true = log only | false = actually execute
+
+var DUPLICATES_TO_DELETE = [
+    {
+        delete_model_id: 'sys_id_of_model_to_delete',
+        target_model_id: 'sys_id_of_model_to_keep'
+    },
+    // Add further entries here...
+];
+```
+
+| Field              | Description                                              |
+|--------------------|----------------------------------------------------------|
+| `delete_model_id`  | sys_id of the model that will be deleted                 |
+| `target_model_id`  | sys_id of the model that assets will be reassigned to    |
+
+> ⚠️ The script validates the configuration before running. It aborts if any `delete_model_id` equals its `target_model_id`, or if placeholder values are detected.
+
+#### How to Run
+
+1. Navigate to **System Definition → Fix Scripts** in ServiceNow.
+2. Create a new Fix Script and set **Scope** to `Global`.
+3. Paste the content of `hw_model_dedup_manual.js`.
+4. Fill in the `DUPLICATES_TO_DELETE` array with your sys_id pairs.
+5. Ensure `DRY_RUN = true`.
+6. Click **Run Fix Script** and review the log output.
+7. If the log looks correct, set `DRY_RUN = false` and run again to apply changes.
+
+#### Log Output Example
+
+```
+[HW-MODEL-DEDUP] === Start (DRY-RUN) ===
+[HW-MODEL-DEDUP] Entries to process: 1
+[HW-MODEL-DEDUP] --- Entry 1 ---
+[HW-MODEL-DEDUP]   To delete    : ThinkPad X1 Carbon (Manufacturer: Lenovo) [S5c291d...]
+[HW-MODEL-DEDUP]   Target model : ThinkPad X1 Carbon Gen 9 (Manufacturer: Lenovo) [587acc...]
+[HW-MODEL-DEDUP]   Linked assets: 3
+[HW-MODEL-DEDUP]     [DRY-RUN] Would move 3 record(s) in "alm_asset".
+[HW-MODEL-DEDUP]     [DRY-RUN] Would delete model: "ThinkPad X1 Carbon (Manufacturer: Lenovo)"
+[HW-MODEL-DEDUP] === Summary (DRY-RUN) ===
+[HW-MODEL-DEDUP] Entries processed : 1
+[HW-MODEL-DEDUP] Assets reassigned : 3
+[HW-MODEL-DEDUP] Models deleted    : 0 (DRY-RUN)
+[HW-MODEL-DEDUP] === End ===
+```
+
+#### ⚠️ Important Notes
+
+- The script **permanently deletes** models when `DRY_RUN = false`. There is no undo.
+- The configuration is validated before execution — the script aborts on any error.
+- Always verify the correct sys_ids in your instance before running.
+- Always create a **backup** or verify in a non-production instance first.
 
 ---
 
