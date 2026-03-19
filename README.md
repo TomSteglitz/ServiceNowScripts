@@ -1,62 +1,156 @@
-# 🔧 ServiceNow Background Script – Hardware Asset Price Fix
+# ServiceNow Background Fix Scripts
 
-A ServiceNow Background Script to safely update the price (`cost`) of Hardware Assets (`alm_hardware`) by their Display Name.
+A collection of background fix scripts for ServiceNow maintenance tasks.  
+All scripts are written in JavaScript (ServiceNow Rhino engine) and must be executed in scope **`global`** as a **Fix Script**.
 
----
-
-## 📋 Description
-
-This script searches for **all** Hardware Assets matching a specified Display Name and updates their price. It includes a built-in **Dry Run mode** which is active by default — allowing you to safely preview all changes before anything is actually saved.
+> ⚠️ **Every script includes a `DRY_RUN` flag.**  
+> Always run with `DRY_RUN = true` first and review the log output before executing live changes.
 
 ---
 
-## ✅ Prerequisites
+## Repository Structure
 
-- ServiceNow instance with access to **Background Scripts**
-  - Navigation: `System Definition` → `Background Scripts`
-- Permission to execute Background Scripts (Role: `admin`)
-- Write access to the `alm_hardware` table
-
----
-
-## ⚙️ Configuration
-
-At the top of the script you will find the configuration section — **only this section should be modified**:
-
-```javascript
-var DRY_RUN = true; // true = preview only, false = changes will be saved
-
-var ASSET_DISPLAY_NAME = 'Enter Display Name here'; // e.g. 'Dell Latitude 5520'
-var NEUER_PREIS        = 0.00;                       // e.g. 1299.99
+```
+/
+├── README.md
+└── scripts/
+    ├── hw_model_dedup.js
+    └── snow_asset_price_fix.js
 ```
 
-| Variable | Description |
-|---|---|
-| `DRY_RUN` | `true` = Preview mode (no changes saved), `false` = Changes will be written to the database |
-| `ASSET_DISPLAY_NAME` | Exact Display Name of the Hardware Asset (case-sensitive) |
-| `NEUER_PREIS` | The new price as a decimal number (e.g. `1299.99`) |
+---
+
+## Scripts
 
 ---
 
-## 🚀 Usage
+### 1. Hardware Model Duplicate Cleanup
 
-### Step 1 – Dry Run (Preview)
+**File:** `scripts/hw_model_dedup.js`
 
-1. Enter `ASSET_DISPLAY_NAME` and `NEUER_PREIS`
-2. Keep `DRY_RUN = true`
-3. Run the script and review the output
+#### Purpose
 
-### Step 2 – Live Execution
+Finds and removes duplicate entries in the `cmdb_hardware_product_model` table.  
+Duplicates are identified by matching **name** (case-insensitive) and **manufacturer**.  
+The **oldest** record is kept as the master; all newer duplicates are deleted.  
+Before deletion, any linked assets are automatically reassigned to the master record.
 
-1. Confirm the output from the Dry Run
-2. Set `DRY_RUN = false`
-3. Run the script again
+#### Duplicate Criteria
+
+| Field          | Comparison       |
+|----------------|------------------|
+| `name`         | case-insensitive |
+| `manufacturer` | case-insensitive |
+
+#### Master Logic
+
+| Record   | Action                         |
+|----------|--------------------------------|
+| Oldest   | ✅ Kept as master              |
+| Newer(s) | 🔁 Assets reassigned → deleted |
+
+#### Affected Tables (Asset Reassignment)
+
+| Table              | Field      |
+|--------------------|------------|
+| `alm_asset`        | `model`    |
+| `cmdb_ci_hardware` | `model_id` |
+| `cmdb_ci`          | `model_id` |
+
+#### Configuration
+
+```javascript
+var DRY_RUN = true; // true = log only | false = actually execute
+
+var ASSET_TABLES = [
+    { table: 'alm_asset',        field: 'model'    },
+    { table: 'cmdb_ci_hardware', field: 'model_id' },
+    { table: 'cmdb_ci',          field: 'model_id' }
+];
+```
+
+Add or remove entries from `ASSET_TABLES` if your instance uses additional tables that reference hardware models.
+
+#### How to Run
+
+1. Navigate to **System Definition → Fix Scripts** in ServiceNow.
+2. Create a new Fix Script and set **Scope** to `Global`.
+3. Paste the content of `hw_model_dedup.js`.
+4. Ensure `DRY_RUN = true`.
+5. Click **Run Fix Script** and review the log output.
+6. If the log looks correct, set `DRY_RUN = false` and run again to apply changes.
+
+#### Log Output Example
+
+```
+[HW-MODEL-DEDUP] === Start (DRY-RUN) ===
+[HW-MODEL-DEDUP] --- Group: "ThinkPad X1 Carbon" | Manufacturer: Lenovo
+[HW-MODEL-DEDUP]     [MASTER - keep]   abc123... | created: 2021-03-10 08:00:00
+[HW-MODEL-DEDUP]     [DELETE - newer]  def456... | created: 2023-07-15 14:22:00 | assets: 5
+[HW-MODEL-DEDUP]       → Reassigning assets to master...
+[HW-MODEL-DEDUP]       [DRY-RUN] Would move 5 record(s) in "alm_asset".
+[HW-MODEL-DEDUP]       [DRY-RUN] Would delete model: "ThinkPad X1 Carbon" [def456...]
+[HW-MODEL-DEDUP] === Summary (DRY-RUN) ===
+[HW-MODEL-DEDUP] Duplicate groups found : 1
+[HW-MODEL-DEDUP] Assets reassigned      : 5
+[HW-MODEL-DEDUP] Models deleted         : 0 (DRY-RUN)
+[HW-MODEL-DEDUP] === End ===
+```
+
+#### ⚠️ Important Notes
+
+- This script **permanently deletes** records when `DRY_RUN = false`. There is no undo.
+- Always create a **backup** or verify in a non-production instance first.
+- The script does not handle models linked to active orders or contracts — verify manually if needed.
 
 ---
 
-## 📤 Example Output
+### 2. Hardware Asset Price Fix
 
-### Dry Run
+**File:** `scripts/snow_asset_price_fix.js`
+
+#### Purpose
+
+Updates the `cost` field for all hardware assets in the `alm_hardware` table that match a given **Display Name**.  
+Useful for bulk-correcting wrong or missing prices after imports or model changes.  
+Assets where the price is already correct are skipped automatically.
+
+#### Affected Table
+
+| Table          | Field  | Condition              |
+|----------------|--------|------------------------|
+| `alm_hardware` | `cost` | `display_name` matches |
+
+#### Configuration
+
+```javascript
+var DRY_RUN = true; // true = preview only | false = changes will be saved
+
+var ASSET_DISPLAY_NAME = 'Enter Display Name here'; // e.g. 'Dell Latitude 5520'
+var NEW_PRICE          = 0.00;                      // e.g. 1299.99
+```
+
+| Variable             | Description                                           |
+|----------------------|-------------------------------------------------------|
+| `DRY_RUN`            | `true` = preview only, no changes saved               |
+| `ASSET_DISPLAY_NAME` | Display Name of the assets to update (case-sensitive) |
+| `NEW_PRICE`          | New price value to set on all matching assets         |
+
+> ⚠️ `ASSET_DISPLAY_NAME` is matched **case-sensitively**. Verify the exact name before running.
+
+#### How to Run
+
+1. Navigate to **System Definition → Fix Scripts** in ServiceNow.
+2. Create a new Fix Script and set **Scope** to `Global`.
+3. Paste the content of `snow_asset_price_fix.js`.
+4. Set `ASSET_DISPLAY_NAME` to the exact display name of the target assets.
+5. Set `NEW_PRICE` to the correct price value.
+6. Ensure `DRY_RUN = true`.
+7. Click **Run Fix Script** and review the printed output.
+8. If the preview looks correct, set `DRY_RUN = false` and run again to save changes.
+
+#### Log Output Example
+
 ```
 ======================================================
   Hardware Asset Price Fix Script
@@ -67,25 +161,18 @@ Searching all assets with Display Name: "Dell Latitude 5520"
 
 --------------------------------------------------
   Asset #1
-  Asset Tag    : HW-001234
-  Sys ID       : abc123def456...
-  Current Price: 850.00 EUR
-  New Price    : 1299.99 EUR
-  DRY RUN: Would change price from 850.00 EUR to 1299.99 EUR.
---------------------------------------------------
-  Asset #2
-  Asset Tag    : HW-005678
-  Sys ID       : xyz789...
-  Current Price: 1299.99 EUR
-  New Price    : 1299.99 EUR
-  INFO: Price already identical - no change necessary.
+  Asset Tag     : HW-00423
+  Sys ID        : abc123...
+  Current Price : 999.00 EUR
+  New Price     : 1299.99 EUR
+  DRY RUN: Would change price from 999.00 EUR to 1299.99 EUR.
 
 ======================================================
   Summary
 ======================================================
-  Found          : 2 Asset(s)
-  Already correct: 1 Asset(s)
-  Would be changed: 1 Asset(s)  <- DRY RUN, not yet saved
+  Found           : 1 asset(s)
+  Already correct : 0 asset(s)
+  Would be changed: 1 asset(s)  <- DRY RUN, not yet saved
 
   >> Set DRY_RUN = false to actually save all changes.
 ======================================================
@@ -93,34 +180,26 @@ Searching all assets with Display Name: "Dell Latitude 5520"
 ======================================================
 ```
 
-### Live Execution
-```
-  OK: Price changed: 850.00 EUR -> 1299.99 EUR
-```
+#### ⚠️ Important Notes
+
+- The script aborts with an error if `ASSET_DISPLAY_NAME` is left at its default placeholder value.
+- The script aborts if `NEW_PRICE` is not a valid positive number.
+- Assets where `cost` already equals `NEW_PRICE` are counted as "Already correct" and are not updated.
+- Changes are **not reversible** once `DRY_RUN = false` — always verify the dry-run output first.
 
 ---
 
-## 🛡️ Safety Features
+## Contributing
 
-- **Dry Run active by default** – prevents accidental changes
-- **Input validation** – script aborts if Display Name or price are not properly configured
-- **Identical price detection** – assets that already have the correct price are skipped
-- **All matches are processed** – no asset is silently skipped
+When adding a new script to this project:
 
----
-
-## 📁 Files
-
-| File | Description |
-|---|---|
-| `snow_asset_price_fix.js` | The Background Script |
-| `README.md` | This documentation |
+1. Place the script file under `scripts/`.
+2. Use English for all comments, log messages, and variable names.
+3. Always include a `DRY_RUN` flag at the top of the configuration section.
+4. Add a new section to this `README.md` following the structure above.
 
 ---
 
-## ⚠️ Notes
+## License
 
-- The Display Name must match **exactly** (case-sensitive)
-- The script updates the `cost` field in the `alm_hardware` table
-- Background Scripts run in system context — changes take effect immediately when `DRY_RUN = false`
-- It is strongly recommended to always perform a Dry Run before live execution
+Internal use only. Not for distribution.
