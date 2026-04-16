@@ -15,6 +15,7 @@ All scripts are written in JavaScript (ServiceNow Rhino engine) and must be exec
 ├── Change Management/
 │   └── fix_duplicate_changes_by_requester.js
 └── HAM/
+    ├── create_missing_asset_for_ci.js
     ├── hw_model_dedup.js
     ├── hw_model_dedup_manual.js
     └── snow_asset_price_fix.js
@@ -228,7 +229,42 @@ var DUPLICATES_TO_DELETE = [
 > ⚠️ This script permanently deletes models when `DRY_RUN = false`. There is no undo. Always verify the correct `sys_id`s in your instance before running. Always create a backup or verify in a non-production instance first.
 
 ---
+#### `create_missing_asset_for_ci.js`
 
+**Purpose:**
+Creates a missing `alm_hardware` asset record for a single computer CI (`cmdb_ci_computer`) when no asset exists, or links an existing asset record to the CI if one is already present.
+
+**Behavior:**
+- verifies the target CI exists
+- searches for an existing asset linked back to the CI
+- updates the CI to point to an existing asset if found
+- otherwise creates a new `alm_hardware` record and links it to the CI
+
+**Configuration:**
+```js
+var DRY_RUN = true; // true = preview only, false = apply changes
+
+var CI_TABLE = 'cmdb_ci_computer';
+var CI_SYS_ID = ''; // Set the CI sys_id here
+
+var ASSET_TABLE = 'alm_hardware';
+var ASSET_CI_FIELD = 'cmdb_ci';
+var ASSET_CI_CANDIDATES = ['cmdb_ci', 'ci', 'computer', 'installed_on', 'asset_ci'];
+
+var CI_ASSET_FIELD = 'asset';
+var CI_ASSET_CANDIDATES = ['asset', 'alm_asset', 'hardware_asset', 'installed_asset'];
+```
+
+| Variable | Description |
+|----------|-------------|
+| `DRY_RUN` | `true` = preview only, no changes saved |
+| `CI_TABLE` | CI table to search |
+| `CI_SYS_ID` | sys_id of the target computer CI |
+| `ASSET_TABLE` | Asset table to create or search |
+| `ASSET_CI_FIELD` | Asset field used to reference the CI |
+| `CI_ASSET_FIELD` | CI field used to reference the asset |
+
+> ⚠️ The script aborts if `CI_SYS_ID` is not set or if the target CI cannot be found. Always verify the CI and the field mappings before switching `DRY_RUN` to `false`.
 #### `snow_asset_price_fix.js`
 
 **Purpose:**  
