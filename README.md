@@ -10,7 +10,7 @@ All scripts are written in JavaScript (ServiceNow Rhino engine) and must be exec
 ## Repository Structure
 
 ```
-/
+ServiceNowScripts/
 ├── README.md
 ├── Change Management/
 │   └── fix_duplicate_changes_by_requester.js
@@ -25,6 +25,12 @@ All scripts are written in JavaScript (ServiceNow Rhino engine) and must be exec
     ├── set_hw_quantity_to_one.js
     ├── set_ritm_sourced.js
     └── snow_asset_price_fix.js
+
+platform/
+├── copy_reservation_users_to_group.js
+├── debug_reservation_table.js
+├── move_group_members.js
+└── remove_group_members.js
 ```
 
 ---
@@ -499,6 +505,94 @@ Searching all assets with Display Name: "Dell Latitude 5520"
 ```
 
 > ⚠️ The script aborts with an error if `ASSET_DISPLAY_NAME` is left at its default placeholder value, or if `NEW_PRICE` is not a valid positive number. Changes are not reversible once `DRY_RUN = false` — always verify the dry-run output first.
+
+---
+
+### Platform
+
+Scripts for group and workplace reservation management. All scripts run as **Background Scripts** (System Definition → Scripts – Background), scope **Global**.
+
+---
+
+#### `copy_reservation_users_to_group.js`
+
+**Purpose:**  
+Reads all unique users from the `sn_wsd_rsv_reservation` table (field `requested_for`) and adds them to a target ServiceNow group. Users already in the group are skipped; reservations can optionally be filtered by date.
+
+**Logic:**
+- Looks up the target group by name; aborts if not found
+- Queries all reservations (optionally filtered by `start_date_time >= filterFromDate`)
+- Deduplicates users in memory — each user is processed only once
+- Checks `sys_user_grmember` before inserting to avoid duplicate memberships
+- Skips reservation records where the user reference field is empty
+
+**Configuration:**
+```js
+var targetGroupName  = "WSD:Workplace Reservations GWG";
+var reservedForField = "requested_for"; // field on sn_wsd_rsv_reservation that holds the user
+var filterFromDate   = "";              // e.g. "2025-01-01", or "" for all reservations
+var dryRun           = true;            // true = log only | false = actually add users
+```
+
+| Variable | Description |
+|----------|-------------|
+| `targetGroupName` | Name of the target group in `sys_user_group` |
+| `reservedForField` | Field on `sn_wsd_rsv_reservation` that references the user |
+| `filterFromDate` | ISO date string to filter reservations (`YYYY-MM-DD`), or `""` for all |
+| `dryRun` | `true` = preview only, no changes saved |
+
+> ℹ️ Use `debug_reservation_table.js` first to identify the correct user field name on your instance.
+
+---
+
+#### `debug_reservation_table.js`
+
+**Purpose:**  
+Diagnostic script that prints the total record count of `sn_wsd_rsv_reservation` and dumps all populated field values for the first 3 records. Use this to identify the correct field name for the user reference before running `copy_reservation_users_to_group.js`.
+
+**No configuration required.** Run once, read the output, then update `reservedForField` in the copy script accordingly.
+
+---
+
+#### `move_group_members.js`
+
+**Purpose:**  
+Moves all members from a source group to a target group. Each user is added to `sys_user_grmember` for the target group and removed from the source group. Users already in the target group are skipped. The groups themselves and user accounts are not modified.
+
+**Configuration:**
+```js
+var sourceGroupName = "WSD:Workplace Reservations GWG - Manual";
+var targetGroupName = "WSD:Workplace Reservations GWG";
+var dryRun          = true; // true = log only | false = actually move
+```
+
+| Variable | Description |
+|----------|-------------|
+| `sourceGroupName` | Name of the group to move members out of |
+| `targetGroupName` | Name of the group to move members into |
+| `dryRun` | `true` = preview only, no changes saved |
+
+> ⚠️ In live mode, members are removed from the source group immediately after being added to the target group. There is no undo.
+
+---
+
+#### `remove_group_members.js`
+
+**Purpose:**  
+Removes all members from a specified ServiceNow group by deleting their `sys_user_grmember` records. The group itself and all user accounts remain untouched.
+
+**Configuration:**
+```js
+var groupName = "WSD:Workplace Reservations GWG";
+var dryRun    = true; // true = log only | false = actually remove
+```
+
+| Variable | Description |
+|----------|-------------|
+| `groupName` | Name of the group to clear |
+| `dryRun` | `true` = preview only, no changes saved |
+
+> ⚠️ In live mode, all memberships are permanently deleted. Always run with `dryRun = true` first to confirm the affected users.
 
 ---
 
