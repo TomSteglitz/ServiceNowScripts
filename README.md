@@ -1,9 +1,9 @@
 # ServiceNow Background Fix Scripts
 
 A collection of background fix scripts for ServiceNow maintenance tasks.  
-All scripts are written in JavaScript (ServiceNow Rhino engine) and must be executed in scope **global** as a Fix Script.
+All scripts are written in JavaScript (ServiceNow Rhino engine) and must be executed in scope **global** as a Fix Script or Background Script.
 
-> ⚠️ Every script includes a `DRY_RUN` flag. Always run with `DRY_RUN = true` first and review the log output before executing live changes.
+> ⚠️ Most scripts include a `DRY_RUN` flag. Always run with `DRY_RUN = true` first and review the log output before executing live changes.
 
 ---
 
@@ -15,9 +15,15 @@ All scripts are written in JavaScript (ServiceNow Rhino engine) and must be exec
 ├── Change Management/
 │   └── fix_duplicate_changes_by_requester.js
 └── HAM/
+    ├── approval_reminder_after_7_days.js
+    ├── approval_reminder_enhanced.js
+    ├── cancel_approvals_after_9_days.js
     ├── create_missing_asset_for_ci.js
+    ├── force_close_task.js
     ├── hw_model_dedup.js
     ├── hw_model_dedup_manual.js
+    ├── set_hw_quantity_to_one.js
+    ├── set_ritm_sourced.js
     └── snow_asset_price_fix.js
 ```
 
@@ -25,18 +31,20 @@ All scripts are written in JavaScript (ServiceNow Rhino engine) and must be exec
 
 ## How to Use
 
-1. Navigate to **System Definition → Fix Scripts** in your ServiceNow instance.
+1. Navigate to **System Definition → Fix Scripts** (or **Scripts – Background**) in your ServiceNow instance.
 2. Create a new Fix Script and set **Scope** to **Global**.
 3. Paste the content of the desired script.
 4. **Always ensure `DRY_RUN = true`** before the first run.
 5. Click **Run Fix Script** and review the log output.
 6. If the output looks correct, set `DRY_RUN = false` and run again to apply changes.
 
+> ℹ️ The approval reminder scripts (`approval_reminder_after_7_days.js`, `approval_reminder_enhanced.js`) and `cancel_approvals_after_9_days.js` are intended to be run as **Scheduled Script Executions** (daily), not as one-off Fix Scripts.
+
 ---
 
 ## Dry Run vs. Live Run
 
-Every script in this project includes a `DRY_RUN` flag at the top of the configuration section:
+Every script in this project includes a `DRY_RUN` flag (either a top-level variable or inside a `config` object):
 
 ```js
 var DRY_RUN = true; // true = log only | false = actually execute
@@ -105,6 +113,169 @@ var REQUESTER_SYS_ID = 'sys_id_of_requester'; // sys_id of the target user in sy
 ---
 
 ### HAM
+
+#### `approval_reminder_after_7_days.js`
+
+**Purpose:**  
+Finds all open Service Catalog approval requests (`sysapproval_approver`) and fires the `approval.inserted` event for any approval that is exactly 7 business days old today. All other pending approvals are listed in the log as upcoming reminders.
+
+**Logic:**
+- Queries all `sysapproval_approver` records in state `requested` where `source_table` starts with `sc_req`
+- Calculates the reminder date as 7 business days (Mon–Fri) after `sys_created_on`
+- If the reminder date equals today: fires `gs.eventQueue('approval.inserted', ...)` and logs the record as due
+- Otherwise: logs the record as a pending future reminder with the calculated date
+
+**Configuration:**
+```js
+var config = {
+    days: 7  // business days until reminder
+};
+```
+
+> ℹ️ This script has no `DRY_RUN` flag — the event fires unconditionally when the date matches. Run as a **Scheduled Script Execution** (daily) rather than as a one-off Fix Script.
+
+---
+
+#### `approval_reminder_enhanced.js`
+
+**Purpose:**  
+Identical in logic to `approval_reminder_after_7_days.js`, but fires the `approval.inserted` event after **3 business days** instead of 7. Intended as an earlier reminder in a multi-step escalation chain.
+
+**Configuration:**
+```js
+var config = {
+    days: 3  // business days until reminder
+};
+```
+
+> ℹ️ This script has no `DRY_RUN` flag. Run as a **Scheduled Script Execution** (daily).
+
+---
+
+#### `cancel_approvals_after_9_days.js`
+
+**Purpose:**  
+Automatically rejects all open `sysapproval_approver` records linked to Service Catalog requests that have been in state `requested` for more than 9 business days. For each matching record the state is set to `rejected` and the `approval.rejected` event is fired.
+
+**Logic:**
+- Calculates a cutoff date 9 business days in the past
+- Queries all `sysapproval_approver` records in state `requested` from `sc_req*` tables created before the cutoff
+- In live mode: sets `state = rejected` and fires `approval.rejected`
+
+**Configuration:**
+```js
+var config = {
+    days: 9,      // business days until rejection
+    dryRun: true  // true = log only | false = actually reject
+};
+```
+
+| Variable | Description |
+|----------|-------------|
+| `config.days` | Number of business days after which approvals are rejected |
+| `config.dryRun` | `true` = preview only, no changes made |
+
+> ⚠️ Setting `dryRun = false` permanently rejects approvals. Always verify the dry-run output first. Run as a **Scheduled Script Execution** (daily).
+
+**Log Output Example:**
+```
+=== [SV Cancel Approvals after 9 days] ===
+Modus: DRY-RUN (keine Änderungen)
+Stichtag (älter als): 2025-04-22 00:00:00
+Anzahl gefunden: 2
+  #1 | SysID: abc123...
+      Created: 2025-04-10 09:00:00 | Approver: Jane Doe
+      Document: RITM0001234 | Request: REQ0005678
+      -> WÜRDE abgelehnt (dry-run)
+```
+
+---
+
+#### `create_missing_asset_for_ci.js`
+
+**Purpose:**
+Creates a missing `alm_hardware` asset record for a single computer CI (`cmdb_ci_computer`) when no asset exists, or links an existing asset record to the CI if one is already present.
+
+**Behavior:**
+- Verifies the target CI exists
+- Searches for an existing asset linked back to the CI
+- Updates the CI to point to an existing asset if found
+- Otherwise creates a new `alm_hardware` record and links it to the CI
+
+**Configuration:**
+```js
+var DRY_RUN = true; // true = preview only, false = apply changes
+
+var CI_TABLE = 'cmdb_ci_computer';
+var CI_SYS_ID = ''; // Set the CI sys_id here
+
+var ASSET_TABLE = 'alm_hardware';
+var ASSET_CI_FIELD = 'cmdb_ci';
+var ASSET_CI_CANDIDATES = ['cmdb_ci', 'ci', 'computer', 'installed_on', 'asset_ci'];
+
+var CI_ASSET_FIELD = 'asset';
+var CI_ASSET_CANDIDATES = ['asset', 'alm_asset', 'hardware_asset', 'installed_asset'];
+```
+
+| Variable | Description |
+|----------|-------------|
+| `DRY_RUN` | `true` = preview only, no changes saved |
+| `CI_TABLE` | CI table to search |
+| `CI_SYS_ID` | sys_id of the target computer CI |
+| `ASSET_TABLE` | Asset table to create or search |
+| `ASSET_CI_FIELD` | Asset field used to reference the CI |
+| `CI_ASSET_FIELD` | CI field used to reference the asset |
+
+> ⚠️ The script aborts if `CI_SYS_ID` is not set or if the target CI cannot be found. Always verify the CI and the field mappings before switching `DRY_RUN` to `false`.
+
+---
+
+#### `force_close_task.js`
+
+**Purpose:**  
+Force-closes a ServiceNow task record by bypassing business rules and data policies (`setWorkflow(false)`). Useful for tasks that are stuck and cannot be closed via the UI due to missing mandatory fields.
+
+**Logic:**
+- Looks up the target record by `sys_id` or `number` field
+- Optionally fills configured mandatory fields only if they are currently empty
+- Sets `state` to the configured close value
+- Calls `gr.setWorkflow(false)` to suppress business rules and workflows
+
+**Configuration:**
+```js
+var CONFIG = {
+    taskId:   'HIER_SYS_ID_ODER_NUMMER_EINGEBEN', // sys_id or record number
+    table:    'task',                              // target table
+    closeState: 3,                                 // numeric state value for closed
+    mandatoryFieldOverrides: {
+        // 'close_code':  'Solved (Permanently)',
+        // 'close_notes': 'Force closed via Background Script'
+    },
+    dryRun: true
+};
+```
+
+| Variable | Description |
+|----------|-------------|
+| `taskId` | sys_id or record number of the task to close |
+| `table` | ServiceNow table the task belongs to |
+| `closeState` | Numeric value of the target closed state |
+| `mandatoryFieldOverrides` | Key/value pairs to set on empty mandatory fields |
+| `dryRun` | `true` = preview only, no changes saved |
+
+**Common `closeState` values:**
+
+| Table | Value | Meaning |
+|-------|-------|---------|
+| `incident` | 7 | Closed |
+| `change_request` | 3 | Closed |
+| `change_request` | -4 | Canceled |
+| `sc_task` | 4 | Closed Complete |
+| `task` | 3 | Closed Complete |
+
+> ⚠️ `setWorkflow(false)` suppresses all business rules, workflows, and notifications. Use only when normal closure via UI is not possible. Always verify in a non-production instance first.
+
+---
 
 #### `hw_model_dedup.js`
 
@@ -229,42 +400,47 @@ var DUPLICATES_TO_DELETE = [
 > ⚠️ This script permanently deletes models when `DRY_RUN = false`. There is no undo. Always verify the correct `sys_id`s in your instance before running. Always create a backup or verify in a non-production instance first.
 
 ---
-#### `create_missing_asset_for_ci.js`
 
-**Purpose:**
-Creates a missing `alm_hardware` asset record for a single computer CI (`cmdb_ci_computer`) when no asset exists, or links an existing asset record to the CI if one is already present.
+#### `set_hw_quantity_to_one.js`
 
-**Behavior:**
-- verifies the target CI exists
-- searches for an existing asset linked back to the CI
-- updates the CI to point to an existing asset if found
-- otherwise creates a new `alm_hardware` record and links it to the CI
+**Purpose:**  
+Sets the `quantity` field to `1` on all hardware assets in `alm_hardware` where the current value is not `1`. Can optionally be scoped to a single asset by providing its `sys_id` or `asset_tag`.
 
 **Configuration:**
 ```js
-var DRY_RUN = true; // true = preview only, false = apply changes
-
-var CI_TABLE = 'cmdb_ci_computer';
-var CI_SYS_ID = ''; // Set the CI sys_id here
-
-var ASSET_TABLE = 'alm_hardware';
-var ASSET_CI_FIELD = 'cmdb_ci';
-var ASSET_CI_CANDIDATES = ['cmdb_ci', 'ci', 'computer', 'installed_on', 'asset_ci'];
-
-var CI_ASSET_FIELD = 'asset';
-var CI_ASSET_CANDIDATES = ['asset', 'alm_asset', 'hardware_asset', 'installed_asset'];
+var ASSET_ID = '';    // sys_id or asset_tag; leave empty ('') to process all
+var DRY_RUN  = true; // true = log only | false = actually execute
 ```
 
 | Variable | Description |
 |----------|-------------|
+| `ASSET_ID` | sys_id or asset_tag of a single asset, or `''` to process all affected assets |
 | `DRY_RUN` | `true` = preview only, no changes saved |
-| `CI_TABLE` | CI table to search |
-| `CI_SYS_ID` | sys_id of the target computer CI |
-| `ASSET_TABLE` | Asset table to create or search |
-| `ASSET_CI_FIELD` | Asset field used to reference the CI |
-| `CI_ASSET_FIELD` | CI field used to reference the asset |
 
-> ⚠️ The script aborts if `CI_SYS_ID` is not set or if the target CI cannot be found. Always verify the CI and the field mappings before switching `DRY_RUN` to `false`.
+> ⚠️ Leaving `ASSET_ID` empty processes **all** hardware assets where `quantity != 1`. Always review the dry-run output first.
+
+---
+
+#### `set_ritm_sourced.js`
+
+**Purpose:**  
+Sets the `sourced` field to `true` for a single Request Item (RITM) in the `sc_req_item` table. Useful for correcting the sourcing flag after manual or automated catalog processing.
+
+**Configuration:**
+```js
+var SYS_ID  = 'replace_with_sys_id'; // sys_id of the target RITM
+var DRY_RUN = true;                   // true = log only | false = actually execute
+```
+
+| Variable | Description |
+|----------|-------------|
+| `SYS_ID` | sys_id of the RITM to update |
+| `DRY_RUN` | `true` = preview only, no changes saved |
+
+> ⚠️ The script aborts if the RITM is not found. Verify the sys_id before setting `DRY_RUN = false`.
+
+---
+
 #### `snow_asset_price_fix.js`
 
 **Purpose:**  
@@ -329,7 +505,7 @@ Searching all assets with Display Name: "Dell Latitude 5520"
 ## Guidelines
 
 - Comments and documentation are written in **English**.
-- Scripts are written for use in **ServiceNow Fix Scripts** (server-side GlideRecord API), scope **Global**.
+- Scripts are written for use in **ServiceNow Fix Scripts** or **Background Scripts** (server-side GlideRecord API), scope **Global**.
 - Every new script must be documented in this README under the appropriate section.
 - Always test with `DRY_RUN = true` before applying any live changes.
 
