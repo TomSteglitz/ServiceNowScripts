@@ -1,0 +1,54 @@
+/**
+ * Scheduled Job: Attestation Reminder
+ *
+ * Sends a daily reminder for all asset attestations that are still "In Progress"
+ * and were created more than 3 days ago.
+ *
+ * Trigger:    Scheduled daily
+ * Table:      sn_itam_common_asset_attestation
+ * Condition:  state = in_progress AND sys_created_on <= 3 days ago
+ */
+
+var DRY_RUN = true; // Set to false to actually send reminders
+
+gs.print('==============================');
+gs.print(' Attestation Reminder - ' + new GlideDateTime().getDisplayValue());
+gs.print(DRY_RUN ? ' *** DRY RUN - no emails will be sent ***' : ' *** LIVE ***');
+gs.print('==============================');
+
+var gr = new GlideRecord('sn_itam_common_asset_attestation');
+
+// Only process attestations that are still in progress
+gr.addQuery('state', 'in_progress');
+
+// Only start reminding after 3 days from creation
+gr.addQuery('sys_created_on', '<=', gs.daysAgoStart(3));
+
+gr.query();
+
+var count = 0;
+var details = [];
+
+while (gr.next()) {
+
+    var requestedBy = gr.getValue('requested_by');
+    var taskNumber  = gr.getValue('attestation_number');
+
+    if (!requestedBy) {
+        gs.print('SKIP ' + taskNumber + ': requested_by is empty');
+        continue;
+    }
+
+    if (!DRY_RUN) {
+        gs.eventQueue('sn_itam_common.attestation.reminder', gr, requestedBy, gr.getValue('sys_id'));
+    }
+
+    details.push(taskNumber + ' (' + gr.getDisplayValue('requested_by') + ')');
+    count++;
+}
+
+var summary = '[Attestation Reminder] Reminders ' + (DRY_RUN ? 'would be sent' : 'sent') + ': ' + count
+    + (count > 0 ? '\n  - ' + details.join('\n  - ') : '');
+
+gs.print(summary);
+gs.info(summary);

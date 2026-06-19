@@ -35,7 +35,7 @@
         var count = 0;
         while (count < n) {
             var day = date.getDayOfWeek(); 
-            if (day != 6 && day != 7) {   
+            if (day != 1 && day != 7) {   // ServiceNow: Sun=1, Sat=7
                 count++;
                 if (count == n) break;
             }

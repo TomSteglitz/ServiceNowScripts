@@ -1,7 +1,7 @@
 (function() {
     /**
      * ============================================================
-     * SV REFRA APPROVAL REMINDER AFTER 7 DAYS
+     * SV REFRA APPROVAL REMINDER AFTER 3 DAYS
      * ============================================================
      * Beschreibung: Findet alle offenen Genehmigungsanfragen,
      *               berechnet deren Erinnerungsdatum und listet
@@ -9,7 +9,7 @@
      *               wird das Event 'approval.inserted' ausgelöst.
      * 
      * Konfiguration:
-     *   - days: Werktage bis zur Erinnerung (Standard: 7)
+     *   - days: Werktage bis zur Erinnerung (Standard: 3)
      * 
      * Hinweis: In ServiceNow als Script Include oder 
      *          Background Script ausführen.
@@ -18,7 +18,7 @@
 
     // === KONFIGURATION ===
     var config = {
-        days: 7            // Werktage bis zur Erinnerung
+        days: 3            // Werktage bis zur Erinnerung
     };
 
     /**
@@ -32,14 +32,15 @@
         var date = new GlideDateTime(startDate);
         var count = 0;
         while (count < n) {
-            var day = date.getDayOfWeek(); 
-            if (day != 6 && day != 7) {   
+            var day = date.getDayOfWeek();
+            // ServiceNow: Sun=1, Mon=2, Tue=3, Wed=4, Thu=5, Fri=6, Sat=7
+            if (day != 1 && day != 7) { // exclude Sunday and Saturday
                 count++;
                 if (count == n) break;
             }
             date.addDaysLocalTime(1);
         }
-        return date; 
+        return date;
     }
 
     // Aktuelles Datum
@@ -69,27 +70,30 @@
         var documentId = gr.getDisplayValue('document_id');
         var request = gr.getDisplayValue('request');
         var createdOn = gr.getDisplayValue('sys_created_on');
-        
-        // Berechnen wann die Erinnerung fällig wäre (7 Werktage nach Erstellung)
-        var createdDate = new GlideDateTime(createdOn);
+
+        // Berechnen wann die Erinnerung fällig wäre (3 Werktage nach Erstellung)
+        // getValue() liefert den internen Wert (UTC), getDisplayValue() würde falsch parsen
+        var createdDate = new GlideDateTime(gr.getValue('sys_created_on'));
         var reminderDate = businessDaysFromDate(createdDate, config.days);
-        var reminderDateStr = reminderDate.getLocalDate();
-        
+        // Compare date-only as YYYY-MM-DD strings (first 10 chars of UTC value)
+        var reminderDateStr = reminderDate.getValue().substring(0, 10);
+        var todayDateStr    = now.getValue().substring(0, 10);
+
         count++;
-        
-        // Prüfen ob Erinnerung heute fällig ist
-        if (reminderDateStr == today) {
+
+        // Erinnerung feuern wenn Reminder-Datum exakt heute ist
+        if (reminderDateStr === todayDateStr) {
             dueCount++;
             dueList += "\n  #" + dueCount + " | SysID: " + sysId;
             dueList += "\n      Created: " + createdOn + " | Reminder: " + reminderDateStr + " (HEUTE fällig)";
             dueList += "\n      Approver: " + approver + " | Document: " + documentId + " | Request: " + request;
             
             // Event auslösen für Erinnerung
-            gs.eventQueue('approval.inserted', gr, gr.sys_id, gs.getUserID());
+            gs.eventQueue('approval.inserted', gr, gr.getValue('sys_id'), gs.getUserID());
         } else {
             pendingCount++;
             pendingList += "\n  #" + pendingCount + " | SysID: " + sysId;
-            pendingList += "\n      Created: " + createdOn + " | Reminder: " + reminderDateStr;
+            pendingList += "\n      Created: " + createdOn + " | Reminder (ausstehend): " + reminderDateStr;
             pendingList += "\n      Approver: " + approver + " | Document: " + documentId + " | Request: " + request;
         }
     }
@@ -103,7 +107,7 @@
         logMsg += "\nNoch ausstehend: " + pendingCount;
         
         if (dueCount > 0) {
-            logMsg += "\n\n=== HEUTE FÄLLIG (Event wird getriggert) ===" + dueList;
+            logMsg += "\n\n=== FÄLLIG / ÜBERFÄLLIG (Event wird getriggert) ===" + dueList;
         }
         
         if (pendingCount > 0) {
