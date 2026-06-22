@@ -21,7 +21,7 @@ var CONFIG = {
     dryRun: true,
 
     // Maximale Anzahl zu löschender Assets (Sicherheitslimit, 0 = kein Limit)
-    maxDelete: 5
+    maxDelete: 1
 };
 
 // ═══════════════════════════════════════════════════════════
